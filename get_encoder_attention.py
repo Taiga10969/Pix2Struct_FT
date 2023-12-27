@@ -13,35 +13,66 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 import utils
+from configs import generate_text_Config
+
+config = generate_text_Config()
 
 # check GPU usage
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 if torch.cuda.device_count()==0: print('Use 1 GPU')
 else: print(f'Use {torch.cuda.device_count()} GPUs')
 
-model_name = 'google/deplot'
 
-image_processor = Pix2StructImageProcessor.from_pretrained(model_name)
-tokenizer = T5TokenizerFast.from_pretrained(model_name)
+
+image_processor = Pix2StructImageProcessor.from_pretrained(config.pretrained_model_name)
+tokenizer = T5TokenizerFast.from_pretrained(config.pretrained_model_name)
 processor = Pix2StructProcessor(image_processor = image_processor,
                                 tokenizer = tokenizer)
-processor.image_processor.is_vqa = False # タスクをvqa=TueからFalseに変更
-model = Pix2StructForConditionalGeneration.from_pretrained(model_name).to(device)
 
+model = Pix2StructForConditionalGeneration.from_pretrained(config.pretrained_model_name).to(device)
+model = model.eval()
+
+print("processor.image_processor.is_vqa : ", processor.image_processor.is_vqa)
+processor.image_processor.is_vqa = False # タスクをvqa=TueからFalseに変更
+print("processor.image_processor.is_vqa : ", processor.image_processor.is_vqa)
 
 trained_model_pth = './DePlot_FT_param/run_result_FT_test_001_epoch_10.pth'
 msg = model.load_state_dict(torch.load(trained_model_pth, map_location=torch.device(device)))
 print(f"model.load_state_dict [info] msg : {msg}")
 
+
+
 img_pth =  './demo_image/flamingo.png'
+img_pth =  './demo_image/LLaMA.png'
 image = Image.open(img_pth).convert('RGB')
 
-input_prompt = 'Caption for this figure TEST : '
+width, height = image.size
+print(f'image.size : width {width}, height {height}')
+input_prompt = 'Caption for this figure : '
 
+#text_data = 'Generate underlying data table of the figure below:s with 1 km of (0.82) gas turbines (0.81) in the morning peak (0.82) in the afternoon peak | Stereo Motion | Monocular Motion (Biocular View) | Combined | Monocular Motion (Monocular View) <0x0A> Rotation Amount | 1.37 | 1.28 | 1.33 | 1.27 | 1.01 <0x0A> Mean Regression Slope | 1.14 | 1.17 | 1.17 | 1.14 | 0.76 <0x0A> 45* | 1.17 | 1.17 | 1.20 | 1.17 | 0.75 <0x0A> 55* | 1.19 | 1.21 | 1.20 | 1.15 | 0.79 <0x0A> 65* | 1.11 | 1.00 | 1.11 | 1.09 | 0.81'
 inputs, info = processor(images=image, text=input_prompt, return_tensors="pt")
-inputs = {key: value.to(device) for key, value in inputs.items()}
+#inputs = processor(images=image, text="Generate underlying data table of the figure below:", return_tensors="pt")
+#inputs = processor(images=image, text="Generate caption:", return_tensors="pt")
 
-predictions = model.generate(**inputs, 
+inputs = {key: value.to(device) for key, value in inputs.items()}
+# decoder_input_idsから<eos>を削除
+if processor.image_processor.is_vqa == False:
+    inputs['decoder_input_ids'] = inputs['decoder_input_ids'][:, :-1]
+    inputs['decoder_attention_mask'] = inputs['decoder_attention_mask'][:, :-1]
+print(inputs)
+    
+# 入力画像を調査 0番目のデータに対して
+input_image = info['input_image'][0]
+input_image = Image.fromarray(input_image).convert('RGB')
+width, height = input_image.size
+print(f'input_image.size : width {width}, height {height}')
+input_image.save('./get_cross_attention/input_image.png')
+    
+#print(inputs)
+
+predictions = model.generate(flattened_patches = inputs['flattened_patches'],
+                             attention_mask = inputs['attention_mask'],
                              output_attentions = True,
                              output_hidden_states = True,
                              max_new_tokens = 129,
