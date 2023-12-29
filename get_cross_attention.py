@@ -75,7 +75,7 @@ predictions = model.generate(flattened_patches = inputs['flattened_patches'],
                              attention_mask = inputs['attention_mask'],
                              output_attentions = True,
                              output_hidden_states = True,
-                             max_new_tokens = 129,
+                             max_new_tokens = 128,
                              return_dict_in_generate = True,
                              )
 
