@@ -11,6 +11,7 @@ import requests
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 import utils
 from configs import generate_text_Config
@@ -36,26 +37,23 @@ print("processor.image_processor.is_vqa : ", processor.image_processor.is_vqa)
 processor.image_processor.is_vqa = False # タスクをvqa=TueからFalseに変更
 print("processor.image_processor.is_vqa : ", processor.image_processor.is_vqa)
 
-trained_model_pth = './DePlot_FT_param/run_result_FT_test_001_epoch_10.pth'
+trained_model_pth = '/taiga/Pix2Struct_FT_captioning/run_result_matcha_base_train_figure_captioning_001/run_result_matcha_base_train_figure_captioning_001_epoch_10.pth'
 msg = model.load_state_dict(torch.load(trained_model_pth, map_location=torch.device(device)))
 print(f"model.load_state_dict [info] msg : {msg}")
 
 
-
-img_pth =  './demo_image/flamingo.png'
+# OUTPUT_ATTENTION_CONFIG ###############
+#img_pth =  './demo_image/flamingo.png'
 img_pth =  './demo_image/LLaMA.png'
+input_prompt = 'Caption for this figure : '
+##########################################
+
 image = Image.open(img_pth).convert('RGB')
 
 width, height = image.size
 print(f'image.size : width {width}, height {height}')
-input_prompt = 'Caption for this figure : '
 
-start_time = time.time()
-
-#text_data = 'Generate underlying data table of the figure below:s with 1 km of (0.82) gas turbines (0.81) in the morning peak (0.82) in the afternoon peak | Stereo Motion | Monocular Motion (Biocular View) | Combined | Monocular Motion (Monocular View) <0x0A> Rotation Amount | 1.37 | 1.28 | 1.33 | 1.27 | 1.01 <0x0A> Mean Regression Slope | 1.14 | 1.17 | 1.17 | 1.14 | 0.76 <0x0A> 45* | 1.17 | 1.17 | 1.20 | 1.17 | 0.75 <0x0A> 55* | 1.19 | 1.21 | 1.20 | 1.15 | 0.79 <0x0A> 65* | 1.11 | 1.00 | 1.11 | 1.09 | 0.81'
 inputs, info = processor(images=image, text=input_prompt, return_tensors="pt")
-#inputs = processor(images=image, text="Generate underlying data table of the figure below:", return_tensors="pt")
-#inputs = processor(images=image, text="Generate caption:", return_tensors="pt")
 
 inputs = {key: value.to(device) for key, value in inputs.items()}
 # decoder_input_idsから<eos>を削除
@@ -97,7 +95,8 @@ print("predictions['cross_attentions'][0].shape : ", predictions['cross_attentio
 
 # OUTPUT_ATTENTION_CONFIG ###############
 batch = 0
-plt_save_pormat = 'png'
+plt_save_pormat = 'svg'
+num_columns = 5  # 単語毎のAttentionを一枚の画像にする際の横方向の画像枚数
 ##########################################
 
 # processorが出力する画像情報の詳細(info)を取得
@@ -148,7 +147,7 @@ print("prediction_word_choose_list.keys() : ", prediction_word_choose_list.keys(
 
 active_cross_attention = layer_mean_cross_attention[:active_patch_num, :active_patch_num]
 
-for view_word in prediction_word_choose_list.keys():
+for view_word in tqdm(prediction_word_choose_list.keys(), desc="Processing_attention_map"):
     group_attntion = []
     for i in prediction_word_choose_list[view_word]:
         group_attntion.append(active_cross_attention[i])
@@ -165,3 +164,35 @@ for view_word in prediction_word_choose_list.keys():
     plt.tick_params(labelbottom=False, labelleft=False, labelright=False, labeltop=False, bottom=False, left=False, right=False, top=False)
     plt.savefig(f'./get_cross_attention/attention_map_{view_word}.{plt_save_pormat}',transparent=True)
     plt.close()
+
+
+
+
+# 画像をまとめるキャンバスの初期化
+fig, axs = plt.subplots(nrows=-(-len(prediction_word_choose_list)//num_columns), ncols=num_columns, figsize=(15, 8))
+
+for idx, view_word in tqdm(enumerate(prediction_word_choose_list.keys()), desc="Processing_attention_maps"):
+    group_attntion = []
+    for i in prediction_word_choose_list[view_word]:
+        group_attntion.append(active_cross_attention[i])
+
+    group_attntion = np.mean(group_attntion, axis=0)
+    group_attntion = np.reshape(group_attntion, (patch_num_rows, patch_num_columns))
+
+    group_attntion_map = cv2.resize(group_attntion, (img_width, img_height), interpolation=cv2.INTER_LINEAR)
+    group_attntion_map_rgb = utils.heatmap_to_rgb(group_attntion_map)
+    group_attntion_map = cv2.addWeighted(np.array(input_image), 0.25, group_attntion_map_rgb, 0.75, 0)
+
+    # 画像をキャンバスに配置
+    axs.flat[idx].imshow(group_attntion_map)
+    axs.flat[idx].set_title(utils.generate_title(view_word))
+    axs.flat[idx].tick_params(labelbottom=False, labelleft=False, labelright=False, labeltop=False, bottom=False, left=False, right=False, top=False)
+# 余分なサブプロットがあれば非表示にする
+for idx in range(len(prediction_word_choose_list), axs.size):
+    axs.flat[idx].axis('off')
+# 余白を調整
+plt.tight_layout()
+
+# 画像を保存
+plt.savefig(f'./get_cross_attention/attention_maps.{plt_save_pormat}', transparent=True)
+plt.show()
